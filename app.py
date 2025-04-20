@@ -8,9 +8,7 @@ import pandas as pd
 import array
 import math
 import threading
-from river import ensemble
-from river import tree
-from river import preprocessing
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 
 if getattr(sys, 'frozen', False):  
@@ -393,6 +391,11 @@ def correct_all(label):
     
     messagebox.showinfo("Correction Done", f"{corrected} entries updated as {'Malware' if label else 'Benign'}.")
 
+def run_updater():
+    app_dir = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__))
+    updater_path = os.path.join(app_dir, "updater.py")
+    subprocess.Popen(["python", updater_path])
+
 root = tk.Tk()
 root.title("Malware Detector")
 root.geometry("600x400")
@@ -428,6 +431,7 @@ ttk.Button(root, text="Report Selected as Malware", command=lambda: correct_sele
 ttk.Button(root, text="Report Selected as Benign", command=lambda: correct_selected(0)).pack(pady=2)
 ttk.Button(frame, text="Report All as Safe", command=lambda: correct_all(0)).pack(pady=5)
 ttk.Button(frame, text="Report All as Malware", command=lambda: correct_all(1)).pack(pady=5)
+ttk.Button(frame, text="Check for Updates", command=run_updater).pack(pady=5)
 scrollbar = ttk.Scrollbar(results_frame, command=results_text.yview)
 scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
