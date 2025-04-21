@@ -6,17 +6,76 @@ import sys
 import pefile
 import pandas as pd
 import array
+import requests
 import math
 import threading
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
+
+
+form_url = 'https://docs.google.com/forms/d/e/1FAIpQLSdULAI_3iBGtYezXgEVqKxekDcKDfeO1O1u3J-HU8vZosB4Pw/formResponse'
+
+ENTRY_MAP = {
+    "SizeOfOptionalHeader":"entry.772926302",
+    "Characteristics":"entry.584865945",
+    "MajorLinkerVersion":"entry.1052623901",
+    "MinorLinkerVersion":"entry.1646716978",
+    "SizeOfCode":"entry.1759895923",
+    "SizeOfInitializedData":"entry.409342922",
+    "SizeOfUninitializedData":"entry.585491933",
+    "AddressOfEntryPoint":"entry.561660750",
+    "BaseOfCode":"entry.2044544240",
+     "BaseOfData":"entry.116510831",
+    "ImageBase":"entry.422727476",
+    "SectionAlignment":"entry.785800233",
+    "FileAlignment":"entry.1245052900",
+    "MajorOperatingSystemVersion":"entry.505333620",
+    "MinorOperatingSystemVersion":"entry.1680042423",
+    "MajorImageVersion":"entry.1847606837",
+    "MinorImageVersion":"entry.1066421096",
+    "MajorSubsystemVersion":"entry.74538956",
+    "MinorSubsystemVersion":"entry.295641051",
+    "SizeOfImage":"entry.1646845029",
+    "SizeOfHeaders":"entry.1421565784",
+    "CheckSum":"entry.1032597086",
+    "Subsystem":"entry.472573862",
+    "DllCharacteristics":"entry.1433684428",
+    "SizeOfStackReserve":"entry.254182335",
+    "SizeOfStackCommit":"entry.577247397",
+    "SizeOfHeapReserve":"entry.1115506071",
+    "SizeOfHeapCommit":"entry.744736046",
+    "SizeOfHeapCommit":"entry.726207394",
+    "SectionsMeanEntropy":"entry.1550584337",
+    "SectionsMinEntropy":"entry.395697870",
+    "SectionsMaxEntropy":"entry.835234178",
+    "SectionsMeanRawsize":"entry.2115049601",
+    "SectionsMinRawsize":"entry.1199947630",
+    "SectionsMaxRawsize":"entry.1180942118",
+    "SectionsMeanVirtualsize":"entry.2058594847",
+    "SectionsMinVirtualsize":"entry.1160212188",
+    "SectionMaxVirtualsize":"entry.2104420400",
+    "ImportsNbDLL":"entry.2081508159",
+    "ImportsNb":"entry.251828593",
+    "ImportsNbOrdinal":"entry.742124847",
+    "ExportNb":"entry.27648016",
+    "ResourcesNb":"entry.1292275744",
+    "ResourcesMeanEntropy":"entry.1796884900",
+    "ResourcesMinEntropy":"entry.146376602",
+    "ResourcesMaxEntropy":"entry.1237862337",
+    "ResourcesMeanSize":"entry.1851028484",
+    "ResourcesMinSize":"entry.1509008376",
+    "ResourcesMaxSize":"entry.1239559966",
+    "LoadConfigurationSize":"entry.436547015",
+    "VersionInformationSize":"entry.1469598525",
+    "actual label":"entry.98682290"
+}
 
 if getattr(sys, 'frozen', False):  
     base_path = sys._MEIPASS
 else:
     base_path = os.path.dirname(os.path.abspath(__file__))
 
-MODEL_PATH = os.path.join(base_path, "adaptive_rf_malware.pkl")
+MODEL_PATH = os.path.join(base_path, "adaptive_rf_malware1.pkl")
 
 try:
     model = joblib.load(MODEL_PATH)
@@ -361,13 +420,24 @@ def correct_selected(true_label):
             lines = item["text"].count('\n') + 1
             line_count += lines
             if index < line_count:
-                if item["features"] is None:
+                features = item.get("features")
+                if not features:
                     messagebox.showwarning("Warning", "No features available for correction.")
                     return
+                form_data={}
+                for key, value in features.items():
+                    entry_id = ENTRY_MAP.get(key)
+                    if entry_id:
+                        form_data[entry_id] = str(value)
+                form_data[ENTRY_MAP["actual label"]] = true_label
+                response = requests.post(form_url, data=form_data)
+
                 model.learn_one(item["features"], true_label)
-                messagebox.showinfo("Correction", f"Model updated for:\n{item['path']}")
-                
-                # Optional: Save updated model
+                if response.status_code == 200:
+                    messagebox.showinfo("Correction", f"Sent report for:\n{item['path']}")
+                else:
+                    messagebox.showerror("Error", f"Failed to submit: {response.status_code}")
+                return
                 return
 
         messagebox.showwarning("Warning", "Could not locate selection.")
@@ -439,6 +509,7 @@ file_entry = tk.Entry(file_frame, width=60)
 file_entry.pack(pady=5)
 ttk.Button(file_frame, text="Browse", command=browse_file).pack(pady=5)
 ttk.Button(file_frame, text="Scan File", command=check_malware).pack(pady=5)
+ttk.Button(file_frame, text="Check for Updates", command=run_updater).pack(pady=5)
 
 dir_frame = tk.LabelFrame(root, text="Batch Scan (Directory)", font=("Segoe UI", 12, "bold"), bg="#2d2d44", fg="white", padx=10, pady=10)
 dir_frame.pack(padx=20, pady=10, fill="x")
@@ -465,6 +536,5 @@ ttk.Button(button_frame, text="Mark Selected as Malware", command=lambda: correc
 ttk.Button(button_frame, text="Mark Selected as Benign", command=lambda: correct_selected(0)).grid(row=0, column=1, padx=5, pady=5)
 ttk.Button(button_frame, text="Mark All as Malware", command=lambda: correct_all(1)).grid(row=0, column=2, padx=5, pady=5)
 ttk.Button(button_frame, text="Mark All as Safe", command=lambda: correct_all(0)).grid(row=0, column=3, padx=5, pady=5)
-ttk.Button(button_frame, text="Check for Updates", command=run_updater).grid(row=0, column=4, padx=5, pady=5)
 
 root.mainloop()
