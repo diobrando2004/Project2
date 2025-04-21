@@ -7,8 +7,8 @@ import pefile
 import pandas as pd
 import array
 import math
-import threading
 import subprocess
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 if getattr(sys, 'frozen', False):  
@@ -391,31 +391,24 @@ def correct_all(label):
     
     messagebox.showinfo("Correction Done", f"{corrected} entries updated as {'Malware' if label else 'Benign'}.")
 
-
 def run_updater():
-    updater_path = os.path.join(os.path.dirname(__file__), "updater.py")
-    result = subprocess.call(["python", updater_path])
-
-    if result == 0:
-        result_label.config(text="Update completed successfully.", fg="lightgreen")
-    elif result == 1:
-        result_label.config(text="Update failed. Check your internet or try again.", fg="red")
-    elif result == 2:
-        result_label.config(text="Already using the latest version.", fg="orange")
-    else:
-        result_label.config(text=f"Unknown update status (code {result})", fg="gray")
+    app_dir = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__))
+    updater_path = os.path.join(app_dir, "updater.py")
+    subprocess.Popen(["python", updater_path])
 
 root = tk.Tk()
-root.title("Malware Detector")
+root.title("🛡️ AI Malware Detector")
 root.geometry("800x600")
 root.configure(bg="#1e1e2f")
+
+FONT = ("Segoe UI", 11)
 
 style = ttk.Style()
 style.theme_use("clam")
 style.configure("TButton",
     background="#3c40c6",
     foreground="white",
-    font=("Segoe UI", 11),
+    font=FONT,
     padding=6,
     relief="flat")
 style.map("TButton",
@@ -423,41 +416,44 @@ style.map("TButton",
 style.configure("TLabel",
     background="#1e1e2f",
     foreground="white",
-    font=("Segoe UI", 11))
+    font=FONT)
 
+# Header
 header = tk.Label(root, text="🔍 AI Malware Detection", font=("Segoe UI", 16, "bold"), fg="white", bg="#1e1e2f")
 header.pack(pady=(10, 5))
 
-result_label = tk.Label(root, text="", font=("Segoe UI", 11), fg="lightgreen", bg="#1e1e2f")
-result_label.pack(pady=5)
-
+# FILE SCAN FRAME
 file_frame = tk.LabelFrame(root, text="Single File Scanner", font=("Segoe UI", 12, "bold"), bg="#2d2d44", fg="white", padx=10, pady=10)
 file_frame.pack(padx=20, pady=10, fill="x")
 
-tk.Label(file_frame, text="Select a file to scan:", bg="#2d2d44", fg="white", font=("Segoe UI", 11)).pack(anchor="w")
+tk.Label(file_frame, text="Select a file to scan:", bg="#2d2d44", fg="white", font=FONT).pack(anchor="w")
 file_entry = tk.Entry(file_frame, width=60)
 file_entry.pack(pady=5)
 ttk.Button(file_frame, text="Browse", command=browse_file).pack(pady=5)
 ttk.Button(file_frame, text="Scan File", command=check_malware).pack(pady=5)
 
+# DIRECTORY SCAN FRAME
 dir_frame = tk.LabelFrame(root, text="Batch Scan (Directory)", font=("Segoe UI", 12, "bold"), bg="#2d2d44", fg="white", padx=10, pady=10)
 dir_frame.pack(padx=20, pady=10, fill="x")
 
 ttk.Button(dir_frame, text="Scan Folder", command=scan_directory).pack(pady=5)
 
+# PROGRESS
 progress_bar = ttk.Progressbar(root, mode="indeterminate", length=300)
 progress_bar.pack(pady=10)
 
+# RESULTS
 results_frame = tk.LabelFrame(root, text="Scan Results", font=("Segoe UI", 12, "bold"), bg="#2d2d44", fg="white")
-results_frame.pack(fill="both", expand=False, padx=20, pady=10)
+results_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
-results_text = tk.Text(results_frame, wrap="word", font=("Segoe UI", 10), bg="#28293d", fg="white", height=10)
+results_text = tk.Text(results_frame, wrap="word", font=("Segoe UI", 10), bg="#28293d", fg="white")
 results_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 results_text.config(state=tk.DISABLED)
 
 scrollbar = ttk.Scrollbar(results_frame, command=results_text.yview)
 scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
+# CORRECTION BUTTONS
 button_frame = tk.Frame(root, bg="#1e1e2f")
 button_frame.pack(pady=5)
 
@@ -465,6 +461,9 @@ ttk.Button(button_frame, text="Mark Selected as Malware", command=lambda: correc
 ttk.Button(button_frame, text="Mark Selected as Benign", command=lambda: correct_selected(0)).grid(row=0, column=1, padx=5, pady=5)
 ttk.Button(button_frame, text="Mark All as Malware", command=lambda: correct_all(1)).grid(row=0, column=2, padx=5, pady=5)
 ttk.Button(button_frame, text="Mark All as Safe", command=lambda: correct_all(0)).grid(row=0, column=3, padx=5, pady=5)
-ttk.Button(button_frame, text="Check for Updates", command=run_updater).grid(row=0, column=4, padx=5, pady=5)
+
+# Result Label
+result_label = tk.Label(root, text="", font=("Segoe UI", 11), fg="lightgreen", bg="#1e1e2f")
+result_label.pack(pady=5)
 
 root.mainloop()
