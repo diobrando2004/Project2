@@ -428,7 +428,10 @@ def correct_selected(true_label):
                 for key, value in features.items():
                     entry_id = ENTRY_MAP.get(key)
                     if entry_id:
-                        form_data[entry_id] = str(value)
+                        if isinstance(value, float):
+                            form_data[entry_id] = f"='{value}'"
+                        else:
+                            form_data[entry_id] = str(value)
                 form_data[ENTRY_MAP["actual label"]] = true_label
                 response = requests.post(form_url, data=form_data)
 
@@ -437,7 +440,6 @@ def correct_selected(true_label):
                     messagebox.showinfo("Correction", f"Sent report for:\n{item['path']}")
                 else:
                     messagebox.showerror("Error", f"Failed to submit: {response.status_code}")
-                return
                 return
 
         messagebox.showwarning("Warning", "Could not locate selection.")
