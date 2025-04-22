@@ -7,6 +7,7 @@ import pefile
 import pandas as pd
 import array
 import requests
+import time
 import math
 import threading
 import subprocess
@@ -381,7 +382,7 @@ def scan_directory():
         progress_bar.start()
 
         file_paths = [os.path.join(root, file) for root, _, files in os.walk(dir_path) for file in files]
-        results_data = []  # Reset before scan
+        results_data = []  
         display_lines = []
         malware_count = 0
         benign_count = 0
@@ -465,11 +466,17 @@ def correct_all(label):
 
 
 def run_updater():
-    updater_path = os.path.join(os.path.dirname(__file__), "updater.py")
-    result = subprocess.call(["python", updater_path])
-
+    updater_path = os.path.join(os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__), "updater.py")
+    try:
+        result = subprocess.call([sys.executable, updater_path])
+    except Exception as e:
+        result_label.config(text=f"Error running updater: {e}", fg="red")
+        return
     if result == 0:
         result_label.config(text="Update completed successfully.", fg="lightgreen")
+        time.sleep(2)
+        subprocess.Popen([sys.executable] + sys.argv)
+        sys.exit()
     elif result == 1:
         result_label.config(text="Update failed. Check your internet or try again.", fg="red")
     elif result == 2:
