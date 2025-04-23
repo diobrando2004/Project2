@@ -464,23 +464,27 @@ def correct_all(label):
 
 
 def run_updater():
-    updater_path = os.path.join(os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__), "updater.py")
-    try:
-        result = subprocess.call([sys.executable, updater_path])
-    except Exception as e:
-        result_label.config(text=f"Error running updater: {e}", fg="red")
-        return
-    if result == 0:
-        result_label.config(text="Update completed successfully.", fg="lightgreen")
-        time.sleep(2)
-        subprocess.Popen([sys.executable] + sys.argv)
-        sys.exit()
-    elif result == 1:
-        result_label.config(text="Update failed. Check your internet or try again.", fg="red")
-    elif result == 2:
-        result_label.config(text="Already using the latest version.", fg="orange")
-    else:
-        result_label.config(text=f"Unknown update status (code {result})", fg="gray")
+    def updater_thread():
+        updater_path = os.path.join(os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__), "updater.py")
+        try:
+            result = subprocess.call([sys.executable, updater_path])
+        except Exception as e:
+            result_label.config(text=f"Error running updater: {e}", fg="red")
+            return
+        if result == 0:
+            result_label.config(text="Update completed successfully.", fg="lightgreen")
+            root.after(2000, restart_app)
+        elif result == 1:
+            result_label.config(text="Update failed. Check your internet or try again.", fg="red")
+        elif result == 2:
+            result_label.config(text="Already using the latest version.", fg="orange")
+        else:
+            result_label.config(text=f"Unknown update status (code {result})", fg="gray")
+    threading.Thread(target=updater_thread).start()
+
+def restart_app():
+    subprocess.Popen([sys.executable] + sys.argv)
+    root.destroy()
 
 root = tk.Tk()
 root.title("Malware Detector")
@@ -516,7 +520,7 @@ file_entry = tk.Entry(file_frame, width=60)
 file_entry.pack(pady=5)
 ttk.Button(file_frame, text="Browse", command=browse_file).pack(pady=5)
 ttk.Button(file_frame, text="Scan File", command=check_malware).pack(pady=5)
-ttk.Button(file_frame, text="Check for Updates", command=run_updater).pack(pady=5)
+ttk.Button(file_frame, text="Check for Updates", command= lambda: threading.Thread(target=run_updater).start()).pack(pady=5)
 
 dir_frame = tk.LabelFrame(root, text="Batch Scan (Directory)", font=("Segoe UI", 12, "bold"), bg="#2d2d44", fg="white", padx=10, pady=10)
 dir_frame.pack(padx=20, pady=10, fill="x")
