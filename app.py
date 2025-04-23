@@ -26,7 +26,7 @@ ENTRY_MAP = {
     "SizeOfUninitializedData":"entry.585491933",
     "AddressOfEntryPoint":"entry.561660750",
     "BaseOfCode":"entry.2044544240",
-     "BaseOfData":"entry.116510831",
+    "BaseOfData":"entry.116510831",
     "ImageBase":"entry.422727476",
     "SectionAlignment":"entry.785800233",
     "FileAlignment":"entry.1245052900",
@@ -416,7 +416,6 @@ def correct_selected(true_label):
     try:
         index = int(results_text.index(tk.INSERT).split('.')[0]) - 1  # Line number - 1
         line_count = 0
-
         for i, item in enumerate(results_data):
             lines = item["text"].count('\n') + 1
             line_count += lines
@@ -435,8 +434,7 @@ def correct_selected(true_label):
                             form_data[entry_id] = str(value)
                 form_data[ENTRY_MAP["actual label"]] = true_label
                 response = requests.post(form_url, data=form_data)
-
-                model.learn_one(item["features"], true_label)
+                #model.learn_one(item["features"], true_label)
                 if response.status_code == 200:
                     messagebox.showinfo("Correction", f"Sent report for:\n{item['path']}")
                 else:
@@ -541,8 +539,8 @@ scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 button_frame = tk.Frame(root, bg="#1e1e2f")
 button_frame.pack(pady=5)
 
-ttk.Button(button_frame, text="Mark Selected as Malware", command=lambda: correct_selected(1)).grid(row=0, column=0, padx=5, pady=5)
-ttk.Button(button_frame, text="Mark Selected as Benign", command=lambda: correct_selected(0)).grid(row=0, column=1, padx=5, pady=5)
+ttk.Button(button_frame, text="report Selected as Malware", command=lambda: correct_selected(1)).grid(row=0, column=0, padx=5, pady=5)
+ttk.Button(button_frame, text="report Selected as Benign", command=lambda: correct_selected(0)).grid(row=0, column=1, padx=5, pady=5)
 ttk.Button(button_frame, text="Mark All as Malware", command=lambda: correct_all(1)).grid(row=0, column=2, padx=5, pady=5)
 ttk.Button(button_frame, text="Mark All as Safe", command=lambda: correct_all(0)).grid(row=0, column=3, padx=5, pady=5)
 
