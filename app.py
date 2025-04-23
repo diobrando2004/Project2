@@ -502,7 +502,7 @@ style.configure("TLabel",
     foreground="white",
     font=("Segoe UI", 11))
 
-header = tk.Label(root, text="🔍 AI Malware Detection", font=("Segoe UI", 16, "bold"), fg="white", bg="#1e1e2f")
+header = tk.Label(root, text="Malware Detection", font=("Segoe UI", 16, "bold"), fg="white", bg="#1e1e2f")
 header.pack(pady=(10, 5))
 
 result_label = tk.Label(root, text="", font=("Segoe UI", 11), fg="lightgreen", bg="#1e1e2f")
@@ -539,8 +539,8 @@ scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 button_frame = tk.Frame(root, bg="#1e1e2f")
 button_frame.pack(pady=5)
 
-ttk.Button(button_frame, text="report Selected as Malware", command=lambda: correct_selected(1)).grid(row=0, column=0, padx=5, pady=5)
-ttk.Button(button_frame, text="report Selected as Benign", command=lambda: correct_selected(0)).grid(row=0, column=1, padx=5, pady=5)
+ttk.Button(button_frame, text="Report Selected as Malware", command=lambda: correct_selected(1)).grid(row=0, column=0, padx=5, pady=5)
+ttk.Button(button_frame, text="Report Selected as Benign", command=lambda: correct_selected(0)).grid(row=0, column=1, padx=5, pady=5)
 ttk.Button(button_frame, text="Mark All as Malware", command=lambda: correct_all(1)).grid(row=0, column=2, padx=5, pady=5)
 ttk.Button(button_frame, text="Mark All as Safe", command=lambda: correct_all(0)).grid(row=0, column=3, padx=5, pady=5)
 
