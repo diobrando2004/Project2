@@ -6,77 +6,17 @@ import sys
 import pefile
 import pandas as pd
 import array
-import requests
-import time
 import math
 import threading
-import subprocess
+import sklearn
 from concurrent.futures import ThreadPoolExecutor
-
-
-form_url = 'https://docs.google.com/forms/d/e/1FAIpQLSdULAI_3iBGtYezXgEVqKxekDcKDfeO1O1u3J-HU8vZosB4Pw/formResponse'
-
-ENTRY_MAP = {
-    "SizeOfOptionalHeader":"entry.772926302",
-    "Characteristics":"entry.584865945",
-    "MajorLinkerVersion":"entry.1052623901",
-    "MinorLinkerVersion":"entry.1646716978",
-    "SizeOfCode":"entry.1759895923",
-    "SizeOfInitializedData":"entry.409342922",
-    "SizeOfUninitializedData":"entry.585491933",
-    "AddressOfEntryPoint":"entry.561660750",
-    "BaseOfCode":"entry.2044544240",
-    "BaseOfData":"entry.116510831",
-    "ImageBase":"entry.422727476",
-    "SectionAlignment":"entry.785800233",
-    "FileAlignment":"entry.1245052900",
-    "MajorOperatingSystemVersion":"entry.505333620",
-    "MinorOperatingSystemVersion":"entry.1680042423",
-    "MajorImageVersion":"entry.1847606837",
-    "MinorImageVersion":"entry.1066421096",
-    "MajorSubsystemVersion":"entry.74538956",
-    "MinorSubsystemVersion":"entry.295641051",
-    "SizeOfImage":"entry.1646845029",
-    "SizeOfHeaders":"entry.1421565784",
-    "CheckSum":"entry.1032597086",
-    "Subsystem":"entry.472573862",
-    "DllCharacteristics":"entry.1433684428",
-    "SizeOfStackReserve":"entry.254182335",
-    "SizeOfStackCommit":"entry.577247397",
-    "SizeOfHeapReserve":"entry.1115506071",
-    "SizeOfHeapCommit":"entry.744736046",
-    "SizeOfHeapCommit":"entry.726207394",
-    "SectionsMeanEntropy":"entry.1550584337",
-    "SectionsMinEntropy":"entry.395697870",
-    "SectionsMaxEntropy":"entry.835234178",
-    "SectionsMeanRawsize":"entry.2115049601",
-    "SectionsMinRawsize":"entry.1199947630",
-    "SectionsMaxRawsize":"entry.1180942118",
-    "SectionsMeanVirtualsize":"entry.2058594847",
-    "SectionsMinVirtualsize":"entry.1160212188",
-    "SectionMaxVirtualsize":"entry.2104420400",
-    "ImportsNbDLL":"entry.2081508159",
-    "ImportsNb":"entry.251828593",
-    "ImportsNbOrdinal":"entry.742124847",
-    "ExportNb":"entry.27648016",
-    "ResourcesNb":"entry.1292275744",
-    "ResourcesMeanEntropy":"entry.1796884900",
-    "ResourcesMinEntropy":"entry.146376602",
-    "ResourcesMaxEntropy":"entry.1237862337",
-    "ResourcesMeanSize":"entry.1851028484",
-    "ResourcesMinSize":"entry.1509008376",
-    "ResourcesMaxSize":"entry.1239559966",
-    "LoadConfigurationSize":"entry.436547015",
-    "VersionInformationSize":"entry.1469598525",
-    "actual label":"entry.98682290"
-}
 
 if getattr(sys, 'frozen', False):  
     base_path = sys._MEIPASS
 else:
     base_path = os.path.dirname(os.path.abspath(__file__))
 
-MODEL_PATH = os.path.join(base_path, "adaptive_rf_malware1.pkl")
+MODEL_PATH = os.path.join(base_path, "random_forest_malwareBig.pkl")
 
 try:
     model = joblib.load(MODEL_PATH)
@@ -92,7 +32,7 @@ def is_pe_file(file_path):
     except pefile.PEFormatError:
         return False 
     except Exception as e:
-        print(f"Error checking {file_path}: {e}")
+        print(f"Error {file_path}: {e}")
         return False
 
 #entropy
@@ -130,26 +70,6 @@ def get_resources(pe):
             return resources
     return resources
 
-#version information
-def get_version_info(pe):
-    res = {}
-    for fileinfo in pe.FileInfo:
-        if fileinfo.Key == 'StringFileInfo':
-            for st in fileinfo.StringTable:
-                for entry in st.entries.items():
-                    res[entry[0]] = entry[1]
-        if fileinfo.Key == 'VarFileInfo':
-            for var in fileinfo.Var:
-                res[var.entry.items()[0][0]] = var.entry.items()[0][1]
-    if hasattr(pe, 'VS_FIXEDFILEINFO'):
-          res['flags'] = pe.VS_FIXEDFILEINFO.FileFlags
-          res['os'] = pe.VS_FIXEDFILEINFO.FileOS
-          res['type'] = pe.VS_FIXEDFILEINFO.FileType
-          res['file_version'] = pe.VS_FIXEDFILEINFO.FileVersionLS
-          res['product_version'] = pe.VS_FIXEDFILEINFO.ProductVersionLS
-          res['signature'] = pe.VS_FIXEDFILEINFO.Signature
-          res['struct_version'] = pe.VS_FIXEDFILEINFO.StrucVersion
-    return res
 
 def extract_infos(fpath):
     res = {}
@@ -240,12 +160,6 @@ def extract_infos(fpath):
         res['LoadConfigurationSize'] = pe.DIRECTORY_ENTRY_LOAD_CONFIG.struct.Size
     except AttributeError:
         res['LoadConfigurationSize'] = 0
-
-    try:
-        version_infos = get_version_info(pe)
-        res['VersionInformationSize'] = len(version_infos.keys())
-    except AttributeError:
-        res['VersionInformationSize'] = 0
     return res
 
 
@@ -264,51 +178,14 @@ def check_malware():
         if not is_pe_file(file_path):
             root.after(0, lambda: result_label.config(text=" Error: Not a valid PE file.", fg="red"))
             return
-
-        try:
-            features = extract_infos(file_path)
-            if features is None:
-                root.after(0, lambda: result_label.config(text=" Error: Feature extraction failed.", fg="red"))
-                return
-
-            res = pd.DataFrame([features])
-            res["is_size_zero"] = (res["SizeOfImage"] == 0).astype(int)
-            min_size = 4096
-            res["SizeOfImage"] = res["SizeOfImage"].replace(0, min_size)
-
-            res["SizeOfHeaders"] = res["SizeOfHeaders"] / res["SizeOfImage"]
-            res["CheckSum"] = res["CheckSum"] / res["SizeOfImage"]
-            res["SectionsMeanRawsize"] = res["SectionsMeanRawsize"] / res["SizeOfImage"]
-            res["SectionsMinRawsize"] = res["SectionsMinRawsize"] / res["SizeOfImage"]
-            res["SectionsMaxRawsize"] = res["SectionsMaxRawsize"] / res["SizeOfImage"]
-            res["SectionsMeanVirtualsize"] = res["SectionsMeanVirtualsize"] / res["SizeOfImage"]
-            res["SectionsMinVirtualsize"] = res["SectionsMinVirtualsize"] / res["SizeOfImage"]
-            res["SectionMaxVirtualsize"] = res["SectionMaxVirtualsize"] / res["SizeOfImage"]
-            res["SizeOfCode"] = res["SizeOfCode"] / res["SizeOfImage"]
-            res["SizeOfInitializedData"] = res["SizeOfInitializedData"] / res["SizeOfImage"]
-            res["SizeOfUninitializedData"] = res["SizeOfUninitializedData"] / res["SizeOfImage"]
-            res["ResourcesMeanSize"] = res["ResourcesMeanSize"] / res["SizeOfImage"]
-            res["ResourcesMinSize"] = res["ResourcesMinSize"] / res["SizeOfImage"]
-            res["ResourcesMaxSize"] = res["ResourcesMaxSize"] / res["SizeOfImage"]
-            res = res.drop(columns='VersionInformationSize', axis=1)
-
-            x_dict = res.iloc[0].to_dict()
-            prediction = model.predict_one(x_dict)
-            proba = model.predict_proba_one(x_dict)
-            confidence = proba.get(prediction, 0) * 100
-            result_text = "Malware Detected!" if prediction == 1 else "File is Safe."
-            result_color = "red" if prediction == 1 else "green"
-
-            root.after(0, lambda: result_label.config(
-                text=f"{result_text}\nConfidence: {confidence:.2f}%", fg=result_color
-            ))
-
-        except Exception as e:
-            root.after(0, lambda: result_label.config(text=f"Error: {e}", fg="red"))
-
+        result_color="green"
+        result_text = process_file(file_path)
+        if  "Malware Detected!" in result_text: result_color="red"
+        root.after(0, lambda: result_label.config(
+            text=f"{result_text}", fg=result_color
+        ))
     scan_thread = threading.Thread(target=scan)
     scan_thread.start()
-
 
 def browse_file():
     file_path = filedialog.askopenfilename()
@@ -319,7 +196,7 @@ def browse_file():
 def process_file(file_path):
     if not is_pe_file(file_path):
         return None
-
+    
     try:
         features = extract_infos(file_path)
         if features is None:
@@ -329,44 +206,40 @@ def process_file(file_path):
         res["is_size_zero"] = (res["SizeOfImage"] == 0).astype(int)
         min_size = 4096
         res["SizeOfImage"] = res["SizeOfImage"].replace(0, min_size)
+        #res["SizeOfOptionalHeader"] = res["SizeOfOptionalHeader"]
+        res["SizeOfHeaders"] = res["SizeOfHeaders"] / res["SizeOfImage"]
+        res["CheckSum"] = res["CheckSum"] / res["SizeOfImage"]
+        res["SectionsMeanRawsize"] = res["SectionsMeanRawsize"] / res["SizeOfImage"]
+        res["SectionsMinRawsize"] = res["SectionsMinRawsize"] / res["SizeOfImage"]
+        res["SectionsMaxRawsize"] = res["SectionsMaxRawsize"] / res["SizeOfImage"]
+        res["SectionsMeanVirtualsize"] = res["SectionsMeanVirtualsize"] / res["SizeOfImage"]
+        res["SectionsMinVirtualsize"] = res["SectionsMinVirtualsize"] / res["SizeOfImage"]
+        res["SectionMaxVirtualsize"] = res["SectionMaxVirtualsize"] / res["SizeOfImage"]
+        res["SizeOfCode"] = res["SizeOfCode"] / res["SizeOfImage"]
+        res["SizeOfInitializedData"] = res["SizeOfInitializedData"] / res["SizeOfImage"]
+        res["SizeOfUninitializedData"] = res["SizeOfUninitializedData"] / res["SizeOfImage"]
+        #res["SizeOfHeapReserve"] = res["SizeOfHeapReserve"] 
+        #res["SizeOfHeapCommit"] = res["SizeOfHeapCommit"]
+        #res["SizeOfStackReserve"] = res["SizeOfStackReserve"] 
+        # res["SizeOfStackCommit"] = res["SizeOfStackCommit"]
+        res["ResourcesMeanSize"] = res["ResourcesMeanSize"] / res["SizeOfImage"]
+        res["ResourcesMinSize"] = res["ResourcesMinSize"] / res["SizeOfImage"]
+        res["ResourcesMaxSize"] = res["ResourcesMaxSize"] / res["SizeOfImage"]
 
-        # Normalize features
-        for col in [
-            "SizeOfHeaders", "CheckSum", "SectionsMeanRawsize", "SectionsMinRawsize",
-            "SectionsMaxRawsize", "SectionsMeanVirtualsize", "SectionsMinVirtualsize",
-            "SectionMaxVirtualsize", "SizeOfCode", "SizeOfInitializedData",
-            "SizeOfUninitializedData", "ResourcesMeanSize", "ResourcesMinSize", "ResourcesMaxSize"
-        ]:
-            res[col] = res[col] / res["SizeOfImage"]
+        prediction = model.predict(res)
+        probability = model.predict_proba(res)
+        result = " Malware Detected!" if prediction[0] == 1 else " File is Safe."
+        confidence = probability[0][prediction[0]] * 100
 
-        res = res.drop(columns='VersionInformationSize', axis=1)
-        x_dict = res.iloc[0].to_dict()
-
-        prediction = model.predict_one(x_dict)
-        proba = model.predict_proba_one(x_dict)
-        confidence = proba.get(prediction, 0) * 100
-        result_text = "Malware Detected!" if prediction == 1 else "File is Safe."
-
-        return {
-            "text": f"{file_path}\n {result_text} (Confidence: {confidence:.2f}%)\n",
-            "features": x_dict,
-            "predicted": prediction,
-            "path": file_path
-        }
+        return f"{file_path}\n{result} (Confidence: {confidence:.2f}%)\n"
 
     except Exception as e:
-        return {
-            "text": f"{file_path}\n Error - {e}\n",
-            "features": None,
-            "predicted": None,
-            "path": file_path
-        }
+        return f"{file_path}\n Error - {e}\n"
 
-results_data = []
+
 
 def scan_directory():
     def scan():
-        global results_data
         if not model:
             messagebox.showerror("Error", "Model not loaded.")
             return
@@ -379,11 +252,10 @@ def scan_directory():
         results_text.config(state=tk.NORMAL)
         results_text.delete(1.0, tk.END)  
         results_text.insert(tk.END, f"Scanning directory: {dir_path}\n\n")
-        progress_bar.start()
+        progress_bar.start()  
 
         file_paths = [os.path.join(root, file) for root, _, files in os.walk(dir_path) for file in files]
-        results_data = []  
-        display_lines = []
+        results = []
         malware_count = 0
         benign_count = 0
 
@@ -392,17 +264,16 @@ def scan_directory():
 
         for result in scan_results:
             if result:
-                display_lines.append(result["text"])
-                results_data.append(result)
-                if "Malware Detected!" in result["text"]:
+                results.append(result)
+                if "Malware Detected!" in result:
                     malware_count += 1
                 else:
                     benign_count += 1
 
         progress_bar.stop()
 
-        if display_lines:
-            results_text.insert(tk.END, "\n".join(display_lines))
+        if results:
+            results_text.insert(tk.END, "\n".join(results))
         else:
             results_text.insert(tk.END, "No PE files found in the selected directory.")
 
@@ -412,140 +283,40 @@ def scan_directory():
     scan_thread = threading.Thread(target=scan)
     scan_thread.start()
 
-def correct_selected(true_label):
-    try:
-        index = int(results_text.index(tk.INSERT).split('.')[0]) - 1  # Line number - 1
-        line_count = 0
-        for i, item in enumerate(results_data):
-            lines = item["text"].count('\n') + 1
-            line_count += lines
-            if index < line_count:
-                features = item.get("features")
-                if not features:
-                    messagebox.showwarning("Warning", "No features available for correction.")
-                    return
-                form_data={}
-                for key, value in features.items():
-                    entry_id = ENTRY_MAP.get(key)
-                    if entry_id:
-                        if isinstance(value, float):
-                            form_data[entry_id] = f"='{value}'"
-                        else:
-                            form_data[entry_id] = str(value)
-                form_data[ENTRY_MAP["actual label"]] = true_label
-                response = requests.post(form_url, data=form_data)
-                #model.learn_one(item["features"], true_label)
-                if response.status_code == 200:
-                    messagebox.showinfo("Correction", f"Sent report for:\n{item['path']}")
-                else:
-                    messagebox.showerror("Error", f"Failed to submit: {response.status_code}")
-                return
-
-        messagebox.showwarning("Warning", "Could not locate selection.")
-    except Exception as e:
-        messagebox.showerror("Error", f"Correction failed: {e}")
-
-def correct_all(label):
-    if not model:
-        messagebox.showerror("Error", "Model not loaded.")
-        return
-
-    corrected = 0
-    for entry in results_data:
-        features = entry.get("features")
-        if features:
-            try:
-                model.learn_one(features, label)
-                corrected += 1
-            except Exception as e:
-                print(f"Failed to correct entry: {entry.get('path')} - {e}")
-    
-    messagebox.showinfo("Correction Done", f"{corrected} entries updated as {'Malware' if label else 'Benign'}.")
-
-
-def run_updater():
-    def updater_thread():
-        updater_path = os.path.join(os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__), "updater.py")
-        try:
-            result = subprocess.call([sys.executable, updater_path])
-        except Exception as e:
-            result_label.config(text=f"Error running updater: {e}", fg="red")
-            return
-        if result == 0:
-            result_label.config(text="Update completed successfully.", fg="lightgreen")
-            root.after(2000, restart_app)
-        elif result == 1:
-            result_label.config(text="Update failed. Check your internet or try again.", fg="red")
-        elif result == 2:
-            result_label.config(text="Already using the latest version.", fg="orange")
-        else:
-            result_label.config(text=f"Unknown update status (code {result})", fg="gray")
-    threading.Thread(target=updater_thread).start()
-
-def restart_app():
-    subprocess.Popen([sys.executable] + sys.argv)
-    root.destroy()
-
 root = tk.Tk()
 root.title("Malware Detector")
-root.geometry("800x600")
-root.configure(bg="#1e1e2f")
+root.geometry("600x400")
+root.configure(bg="#2c3e50")
+
+result_label = tk.Label(root, text="", font=("Arial", 12), fg="black")
+result_label.pack(pady=10) 
 
 style = ttk.Style()
-style.theme_use("clam")
-style.configure("TButton",
-    background="#3c40c6",
-    foreground="white",
-    font=("Segoe UI", 11),
-    padding=6,
-    relief="flat")
-style.map("TButton",
-    background=[("active", "#575fcf")])
-style.configure("TLabel",
-    background="#1e1e2f",
-    foreground="white",
-    font=("Segoe UI", 11))
+style.configure("TButton", font=("Arial", 10), padding=5)
 
-header = tk.Label(root, text="Malware Detection", font=("Segoe UI", 16, "bold"), fg="white", bg="#1e1e2f")
-header.pack(pady=(10, 5))
 
-result_label = tk.Label(root, text="", font=("Segoe UI", 11), fg="lightgreen", bg="#1e1e2f")
-result_label.pack(pady=5)
+frame = tk.Frame(root, bg="#2c3e50")
+frame.pack(pady=20)
 
-file_frame = tk.LabelFrame(root, text="Single File Scanner", font=("Segoe UI", 12, "bold"), bg="#2d2d44", fg="white", padx=10, pady=10)
-file_frame.pack(padx=20, pady=10, fill="x")
-
-tk.Label(file_frame, text="Select a file to scan:", bg="#2d2d44", fg="white", font=("Segoe UI", 11)).pack(anchor="w")
-file_entry = tk.Entry(file_frame, width=60)
+tk.Label(frame, text="Select a file to check for malware:", bg="#2c3e50", fg="white", font=("Arial", 12)).pack()
+file_entry = tk.Entry(frame, width=50)
 file_entry.pack(pady=5)
-ttk.Button(file_frame, text="Browse", command=browse_file).pack(pady=5)
-ttk.Button(file_frame, text="Scan File", command=check_malware).pack(pady=5)
-ttk.Button(file_frame, text="Check for Updates", command= lambda: threading.Thread(target=run_updater).start()).pack(pady=5)
+ttk.Button(frame, text="Browse", command=browse_file).pack(pady=5)
+ttk.Button(frame, text="Check Single File", command=check_malware, style="TButton").pack(pady=10)
+ttk.Button(frame, text="Scan Directory", command=scan_directory, style="TButton").pack(pady=10)
 
-dir_frame = tk.LabelFrame(root, text="Batch Scan (Directory)", font=("Segoe UI", 12, "bold"), bg="#2d2d44", fg="white", padx=10, pady=10)
-dir_frame.pack(padx=20, pady=10, fill="x")
-
-ttk.Button(dir_frame, text="Scan Folder", command=scan_directory).pack(pady=5)
-
-progress_bar = ttk.Progressbar(root, mode="indeterminate", length=300)
+progress_bar = ttk.Progressbar(root, mode="indeterminate", length=250)
 progress_bar.pack(pady=10)
 
-results_frame = tk.LabelFrame(root, text="Scan Results", font=("Segoe UI", 12, "bold"), bg="#2d2d44", fg="white")
-results_frame.pack(fill="both", expand=False, padx=20, pady=10)
+results_frame = tk.Frame(root)
+results_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-results_text = tk.Text(results_frame, wrap="word", font=("Segoe UI", 10), bg="#28293d", fg="white", height=10)
+results_text = tk.Text(results_frame, height=10, wrap="word", font=("Arial", 10))
 results_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-results_text.config(state=tk.DISABLED)
+results_text.config(state=tk.DISABLED)  
 
 scrollbar = ttk.Scrollbar(results_frame, command=results_text.yview)
 scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-button_frame = tk.Frame(root, bg="#1e1e2f")
-button_frame.pack(pady=5)
-
-ttk.Button(button_frame, text="Report Selected as Malware", command=lambda: correct_selected(1)).grid(row=0, column=0, padx=5, pady=5)
-ttk.Button(button_frame, text="Report Selected as Benign", command=lambda: correct_selected(0)).grid(row=0, column=1, padx=5, pady=5)
-ttk.Button(button_frame, text="Mark All as Malware", command=lambda: correct_all(1)).grid(row=0, column=2, padx=5, pady=5)
-ttk.Button(button_frame, text="Mark All as Safe", command=lambda: correct_all(0)).grid(row=0, column=3, padx=5, pady=5)
+results_text.config(yscrollcommand=scrollbar.set)
 
 root.mainloop()
