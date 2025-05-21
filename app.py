@@ -11,7 +11,7 @@ import time
 import math
 import threading
 import subprocess
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 form_url = 'https://docs.google.com/forms/d/e/1FAIpQLSdULAI_3iBGtYezXgEVqKxekDcKDfeO1O1u3J-HU8vZosB4Pw/formResponse'
@@ -71,13 +71,16 @@ ENTRY_MAP = {
     "actual label":"entry.98682290"
 }
 
-if getattr(sys, 'frozen', False):  
-    base_path = sys._MEIPASS
-else:
-    base_path = os.path.dirname(os.path.abspath(__file__))
+def resource_path(relative_path):
+    if getattr(sys, 'frozen', False):
+        base_path = os.path.dirname(sys.executable)
+    else:
+        base_path = os.path.dirname(os.path.abspath(__file__))
 
-MODEL_PATH = os.path.join(base_path, "random_forest_malwareBig.pkl")
+    return os.path.join(base_path, relative_path)
 
+MODEL_PATH = resource_path(os.path.join("resources", "model.dat"))
+ICON_PATH = resource_path(os.path.join("assets", "icon.ico"))
 try:
     model = joblib.load(MODEL_PATH)
 except Exception as e:
@@ -248,10 +251,10 @@ def extract_infos(fpath):
         res['VersionInformationSize'] = 0
     return res
 
-
-
+res = None
 def check_malware():
     def scan():
+        global res
         if not model:
             root.after(0, lambda: result_label.config(text=" Error: Model not loaded", fg="red"))
             return
@@ -314,6 +317,37 @@ def check_malware():
     scan_thread = threading.Thread(target=scan)
     scan_thread.start()
 
+
+def send_current_scan_data(true_label):
+    global res
+    if res is None:
+        #messagebox.showwarning("Warning", "There is no scan data available to send. Please run a scan first.")
+        result_label.config(text="There is no scan data available to send. Please run a scan first.", fg="red")
+        return
+
+    try:
+        features = res.iloc[0].to_dict()
+        form_data = {}
+        for key, value in features.items():
+            entry_id = ENTRY_MAP.get(key)
+            if entry_id:
+                form_data[entry_id] = f"='{value}'" if isinstance(value, float) else str(value)
+
+        form_data[ENTRY_MAP["actual label"]] = true_label
+
+        response = requests.post(form_url, data=form_data)
+        if response.status_code == 200:
+            root.after(0, lambda: result_label.config(
+                text=f"Data submitted successfully.", fg="green"
+            ))
+        else:
+            root.after(0, lambda: result_label.config(
+                text=f"Failed to submit: {response.status_code}", fg="red"
+            ))
+    except Exception as e:
+        root.after(0, lambda: result_label.config(
+                text=f"Submission failed: {e}", fg="red"
+            ))
 
 def browse_file():
     file_path = filedialog.askopenfilename()
@@ -388,20 +422,27 @@ def scan_directory():
             return
 
         results_text.config(state=tk.NORMAL)
-        results_text.delete(1.0, tk.END)  
+        results_text.delete(1.0, tk.END)
         results_text.insert(tk.END, f"Scanning directory: {dir_path}\n\n")
-        progress_bar.start()
 
         file_paths = [os.path.join(root, file) for root, _, files in os.walk(dir_path) for file in files]
-        results_data = []  
+        total_files = len(file_paths)
+
+        if total_files == 0:
+            results_text.insert(tk.END, "No files found in the selected directory.\n")
+            results_text.config(state=tk.DISABLED)
+            return
+
+        progress_bar.config(mode="determinate", maximum=total_files, value=0)
+        progress_bar.update_idletasks()
+
+        results_data = []
         display_lines = []
         malware_count = 0
         benign_count = 0
 
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            scan_results = list(executor.map(process_file, file_paths))
-
-        for result in scan_results:
+        def on_result(result):
+            nonlocal malware_count, benign_count
             if result:
                 display_lines.append(result["text"])
                 results_data.append(result)
@@ -410,22 +451,34 @@ def scan_directory():
                 else:
                     benign_count += 1
 
-        progress_bar.stop()
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {executor.submit(process_file, path): path for path in file_paths}
+
+            for idx, future in enumerate(as_completed(futures)):
+                try:
+                    result = future.result()
+                    on_result(result)
+                except Exception as e:
+                    display_lines.append(f"Error scanning file: {futures[future]} — {str(e)}")
+
+                progress_bar["value"] = idx + 1
+                progress_bar.update_idletasks()
 
         if display_lines:
             results_text.insert(tk.END, "\n".join(display_lines))
         else:
-            results_text.insert(tk.END, "No PE files found in the selected directory.")
+            results_text.insert(tk.END, "No PE files found in the selected directory.\n")
 
         results_text.insert(tk.END, f"\n\nTotal Malware: {malware_count}\nTotal Benign Files: {benign_count}\n")
         results_text.config(state=tk.DISABLED)
 
-    scan_thread = threading.Thread(target=scan)
-    scan_thread.start()
+        progress_bar["value"] = 0
+
+    threading.Thread(target=scan).start()
 
 def correct_selected(true_label):
     try:
-        index = int(results_text.index(tk.INSERT).split('.')[0]) - 1  # Line number - 1
+        index = int(results_text.index(tk.INSERT).split('.')[0]) - 1
         line_count = 0
         for i, item in enumerate(results_data):
             lines = item["text"].count('\n') + 1
@@ -433,7 +486,8 @@ def correct_selected(true_label):
             if index < line_count:
                 features = item.get("features")
                 if not features:
-                    messagebox.showwarning("Warning", "No features available for correction.")
+                    #messagebox.showwarning("Warning", "No features available for submission.")
+                    result_label.config(text="There is no scan data available to send. Please run a scan first.", fg="red")
                     return
                 form_data={}
                 for key, value in features.items():
@@ -447,15 +501,19 @@ def correct_selected(true_label):
                 response = requests.post(form_url, data=form_data)
                 #model.learn_one(item["features"], true_label)
                 if response.status_code == 200:
-                    messagebox.showinfo("Correction", f"Sent report for:\n{item['path']}")
+                    result_label.config(text=f"Sent report for:\n{item['path']}", fg="green")
+                    #messagebox.showinfo("Correction", f"Sent report for:\n{item['path']}")
                 else:
-                    messagebox.showerror("Error", f"Failed to submit: {response.status_code}")
+                    result_label.config(text=f"Failed to submit: {response.status_code}", fg="red")
+                    #messagebox.showerror("Error", f"Failed to submit: {response.status_code}")
                 return
 
-        messagebox.showwarning("Warning", "Could not locate selection.")
+        #messagebox.showwarning("Warning", "Could not locate selection.")
+        result_label.config(text="Could not locate selection.", fg="red")
     except Exception as e:
-        messagebox.showerror("Error", f"Correction failed: {e}")
-
+        result_label.config(text=f"Submission failed: {e}", fg="red")
+        #messagebox.showerror("Error", f"Correction failed: {e}")
+'''
 def correct_all(label):
     if not model:
         messagebox.showerror("Error", "Model not loaded.")
@@ -472,31 +530,41 @@ def correct_all(label):
                 print(f"Failed to correct entry: {entry.get('path')} - {e}")
     
     messagebox.showinfo("Correction Done", f"{corrected} entries updated as {'Malware' if label else 'Benign'}.")
+'''
+'''
+#    def updater_thread():
+#        updater_path = os.path.join(os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__), "updater.py")
+#        try:
+#            result = subprocess.call([sys.executable, updater_path])
+#        except Exception as e:
+#            result_label.config(text=f"Error running updater: {e}", fg="red")
+#            return
+#        if result == 0:
+#            result_label.config(text="Update completed successfully.", fg="lightgreen")
+#            root.after(2000, restart_app)
+#        elif result == 1:
+#            result_label.config(text="Update failed. Check your internet or try again.", fg="red")
+#        elif result == 2:
+#            result_label.config(text="Already using the latest version.", fg="orange")
+#        else:
+#            result_label.config(text=f"Unknown update status (code {result})", fg="gray")
+#    threading.Thread(target=updater_thread).start()
 
-
+#def restart_app():
+#    subprocess.Popen([sys.executable] + sys.argv)
+#    root.destroy()
+'''
 def run_updater():
-    def updater_thread():
-        updater_path = os.path.join(os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__), "updater.py")
-        try:
-            result = subprocess.call([sys.executable, updater_path])
-        except Exception as e:
-            result_label.config(text=f"Error running updater: {e}", fg="red")
-            return
-        if result == 0:
-            result_label.config(text="Update completed successfully.", fg="lightgreen")
-            root.after(2000, restart_app)
-        elif result == 1:
-            result_label.config(text="Update failed. Check your internet or try again.", fg="red")
-        elif result == 2:
-            result_label.config(text="Already using the latest version.", fg="orange")
-        else:
-            result_label.config(text=f"Unknown update status (code {result})", fg="gray")
-    threading.Thread(target=updater_thread).start()
+    base = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(__file__)
+    updater_exe = os.path.join(base, "updater.exe") 
 
-def restart_app():
-    subprocess.Popen([sys.executable] + sys.argv)
+    try:
+        subprocess.Popen([updater_exe])
+    except Exception as e:
+        result_label.config(text=f"Error launching updater: {e}", fg="red")
+        return
+    root.quit()
     root.destroy()
-
 root = tk.Tk()
 root.title("Malware Detector")
 root.geometry("800x600")
@@ -531,18 +599,26 @@ file_entry = tk.Entry(file_frame, width=60)
 file_entry.pack(pady=5)
 ttk.Button(file_frame, text="Browse", command=browse_file).pack(pady=5)
 ttk.Button(file_frame, text="Scan File", command=check_malware).pack(pady=5)
+
+report_frame = ttk.Frame(file_frame)
+report_frame.pack(pady=5)
+ttk.Button(report_frame, text="Report as Malware", width=16, command=lambda: send_current_scan_data(1)).pack(side="left")
+ttk.Button(report_frame, text="Report as Benign", width=16, command=lambda: send_current_scan_data(0)).pack(side="left")
+
 ttk.Button(file_frame, text="Check for Updates", command= lambda: threading.Thread(target=run_updater).start()).pack(pady=5)
 
 dir_frame = tk.LabelFrame(root, text="Batch Scan (Directory)", font=("Segoe UI", 12, "bold"), bg="#2d2d44", fg="white", padx=10, pady=10)
-dir_frame.pack(padx=20, pady=10, fill="x")
+dir_frame.pack(padx=20, pady=5, fill="x")
 
 ttk.Button(dir_frame, text="Scan Folder", command=scan_directory).pack(pady=5)
 
-progress_bar = ttk.Progressbar(root, mode="indeterminate", length=300)
+style.configure("Custom.Horizontal.TProgressbar", troughcolor="#2d2d44",background="#00c853", thickness=20)
+
+progress_bar = ttk.Progressbar(root, style= "Custom.Horizontal.TProgressbar", mode="indeterminate", length=300)
 progress_bar.pack(pady=10)
 
 results_frame = tk.LabelFrame(root, text="Scan Results", font=("Segoe UI", 12, "bold"), bg="#2d2d44", fg="white")
-results_frame.pack(fill="both", expand=False, padx=20, pady=10)
+results_frame.pack(fill="both", expand=False, padx=20, pady=0)
 
 results_text = tk.Text(results_frame, wrap="word", font=("Segoe UI", 10), bg="#28293d", fg="white", height=10)
 results_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -550,13 +626,18 @@ results_text.config(state=tk.DISABLED)
 
 scrollbar = ttk.Scrollbar(results_frame, command=results_text.yview)
 scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+scrollbar.config(command=results_text.yview)
+results_text.config(yscrollcommand=scrollbar.set)
 
 button_frame = tk.Frame(root, bg="#1e1e2f")
 button_frame.pack(pady=5)
 
-ttk.Button(button_frame, text="Report Selected as Malware", command=lambda: correct_selected(1)).grid(row=0, column=0, padx=5, pady=5)
-ttk.Button(button_frame, text="Report Selected as Benign", command=lambda: correct_selected(0)).grid(row=0, column=1, padx=5, pady=5)
-ttk.Button(button_frame, text="Mark All as Malware", command=lambda: correct_all(1)).grid(row=0, column=2, padx=5, pady=5)
-ttk.Button(button_frame, text="Mark All as Safe", command=lambda: correct_all(0)).grid(row=0, column=3, padx=5, pady=5)
+ttk.Button(button_frame, text="Report the selected file as Malware", command=lambda: correct_selected(1)).grid(row=0, column=0, padx=5, pady=5)
+ttk.Button(button_frame, text="Report the selected file as Benign", command=lambda: correct_selected(0)).grid(row=0, column=1, padx=5, pady=5)
+#ttk.Button(button_frame, text="Mark All as Malware", command=lambda: correct_all(1)).grid(row=0, column=2, padx=5, pady=5)
+#ttk.Button(button_frame, text="Mark All as Safe", command=lambda: correct_all(0)).grid(row=0, column=3, padx=5, pady=5)
+
+version_label = tk.Label(root, text="v0.0.3", font=("Segoe UI", 9), fg="gray", bg="#1e1e2f")
+version_label.place(relx=0.0, rely=0.0, anchor="nw", x=10, y=10)
 
 root.mainloop()
